@@ -1,36 +1,77 @@
 import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
-import { db } from '../config/firebase';
+import { db, auth, USAR_STORAGE } from '../config/firebase';
+import {
+  onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword,
+  updateProfile, signOut
+} from 'firebase/auth';
 import {
   collection, addDoc, onSnapshot, query, orderBy, doc, updateDoc, setDoc,
-  deleteDoc, deleteField, FieldPath, runTransaction, writeBatch
+  deleteDoc, deleteField, FieldPath, runTransaction, writeBatch, getDocs, arrayUnion
 } from 'firebase/firestore';
-import { resolverRutina, fromKey, userKey, calcIMC, tipoLink, toKey } from '../utils/helpers';
+import {
+  resolverRutina, estadoChecklist, fromKey, userKey, emailDe, calcIMC, tipoLink, toKey
+} from '../utils/helpers';
+import { subirArchivo, extDeMime, imagenPequena } from '../utils/media';
 
 const GymContext = createContext(null);
 
 const HEARTBEAT_MS = 20000;
 const ONLINE_MS = 50000;
 const MUSICA_INICIAL = { indice: -1, reproduciendo: false };
+const MAX_VIDEO_BYTES = 50 * 1024 * 1024;
+const MAX_B64 = 700000; // un documento de Firestore admite 1 MiB
 
 export function GymProvider({ children }) {
+  // ---------- Sesión ----------
+  const [authListo, setAuthListo] = useState(false);
   const [username, setUsername] = useState('');
   const [activeSalaId, setActiveSalaId] = useState(null);
   const [sala, setSala] = useState(null);
   const [tick, setTick] = useState(0);
   const [mensajes, setMensajes] = useState([]);
   const [colaMusica, setColaMusica] = useState([]);
+  const [playlists, setPlaylists] = useState([]);
   const [rutinas, setRutinas] = useState([]);
   const [progreso, setProgreso] = useState({});
   const [cargas, setCargas] = useState([]);
   const [medidas, setMedidas] = useState([]);
 
-  // Silencios (locales a este teléfono). "Todo" silencia micrófonos y música.
+  // Silencios y volúmenes (locales a este teléfono). "Todo" silencia micrófonos y música.
   const [micMuted, setMicMuted] = useState(false);
   const [othersMuted, setOthersMuted] = useState(false);
   const [appMuted, setAppMuted] = useState(false);
+  const [volMusica, setVolMusica] = useState(1);
+  const [volVoz, setVolVoz] = useState(1);
   const micOff = micMuted || appMuted;
   const othersOff = othersMuted || appMuted;
   const musicOff = appMuted;
+
+  // Firebase recuerda la sesión: al abrir la app se entra directo si ya iniciaste sesión.
+  useEffect(() => {
+    return onAuthStateChanged(auth, (u) => {
+      setUsername(u ? u.displayName || (u.email || '').split('@')[0] : '');
+      setAuthListo(true);
+    });
+  }, []);
+
+  const iniciarSesion = async (nombre, pass) => {
+    await signInWithEmailAndPassword(auth, emailDe(nombre), pass);
+  };
+
+  const registrar = async (nombre, pass) => {
+    const limpio = nombre.trim();
+    const cred = await createUserWithEmailAndPassword(auth, emailDe(limpio), pass);
+    await updateProfile(cred.user, { displayName: limpio });
+    // El perfil liga el nombre al uid: lo usan las reglas de Firestore para proteger los datos de cada usuario.
+    await setDoc(doc(db, 'usuarios', userKey(limpio)), { uid: cred.user.uid, nombre: limpio, creadoEn: Date.now() });
+    setUsername(limpio);
+  };
+
+  const cerrarSesion = async () => {
+    setActiveSalaId(null);
+    await signOut(auth);
+    setUsername('');
+  };
 
   // ---------- Datos de la sala activa ----------
   useEffect(() => {
@@ -49,6 +90,8 @@ export function GymProvider({ children }) {
         setMensajes(snap.docs.map((d) => ({ id: d.id, ...d.data() })))),
       onSnapshot(query(salaCol('musica'), orderBy('timestamp', 'asc')), (snap) =>
         setColaMusica(snap.docs.map((d) => ({ id: d.id, ...d.data() })))),
+      onSnapshot(query(salaCol('playlists'), orderBy('creadoEn', 'asc')), (snap) =>
+        setPlaylists(snap.docs.map((d) => ({ id: d.id, ...d.data() })))),
       onSnapshot(salaCol('rutinas'), (snap) =>
         setRutinas(snap.docs.map((d) => ({ id: d.id, ...d.data() })))),
       onSnapshot(salaCol('progreso'), (snap) => {
@@ -63,13 +106,13 @@ export function GymProvider({ children }) {
       unsubs.forEach((u) => u());
       updateDoc(salaRef, new FieldPath('presencia', username), deleteField()).catch(() => {});
       updateDoc(salaRef, new FieldPath('microfonos', username), deleteField()).catch(() => {});
-      setSala(null); setMensajes([]); setColaMusica([]); setRutinas([]); setProgreso({});
+      setSala(null); setMensajes([]); setColaMusica([]); setPlaylists([]); setRutinas([]); setProgreso({});
     };
   }, [activeSalaId, username]);
 
   // ---------- Datos personales (privados por usuario) ----------
   useEffect(() => {
-    if (!username) return;
+    if (!username) { setCargas([]); setMedidas([]); return; }
     const base = ['usuarios', userKey(username)];
     const u1 = onSnapshot(collection(db, ...base, 'cargas'), (snap) =>
       setCargas(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
@@ -84,11 +127,23 @@ export function GymProvider({ children }) {
     return Object.keys(p).filter((n) => ahora - p[n] < ONLINE_MS);
   }, [sala, tick]);
 
+  // Todos los que pertenecen a la sala (hayan entrado alguna vez), estén o no en línea.
+  const miembros = useMemo(() => {
+    const set = new Set([sala?.creador, ...(sala?.miembros || []), ...Object.keys(sala?.presencia || {})]);
+    return [...set].filter(Boolean);
+  }, [sala]);
+
   // Los demás ven un 🔇 junto a tu avatar cuando tu micrófono está apagado.
   useEffect(() => {
     if (!activeSalaId || !username) return;
     updateDoc(doc(db, 'salas', activeSalaId), new FieldPath('microfonos', username), micOff).catch(() => {});
   }, [micOff, activeSalaId, username]);
+
+  // Entrar a una sala la guarda como tuya: seguirá apareciendo en tu lista aunque estés lejos.
+  const entrarSala = (s) => {
+    setActiveSalaId(s.id);
+    updateDoc(doc(db, 'salas', s.id), { miembros: arrayUnion(username) }).catch(() => {});
+  };
 
   const salirSala = () => setActiveSalaId(null);
 
@@ -96,8 +151,48 @@ export function GymProvider({ children }) {
   const enviarMensaje = async (texto) => {
     if (!texto.trim() || !activeSalaId) return;
     await addDoc(collection(db, 'salas', activeSalaId, 'chat'), {
-      texto: texto.trim(), usuario: username, timestamp: Date.now()
+      tipo: 'texto', texto: texto.trim(), usuario: username, timestamp: Date.now()
     });
+  };
+
+  // Imagen o video (resultado de expo-image-picker). Se sube a Firebase Storage.
+  // Si Storage no está disponible, una imagen pequeña se guarda dentro del propio mensaje.
+  const enviarMedia = async (asset, onProgress) => {
+    if (!activeSalaId) return;
+    const esVideo = asset.type === 'video';
+    const mime = asset.mimeType || (esVideo ? 'video/mp4' : 'image/jpeg');
+    if (esVideo && asset.fileSize && asset.fileSize > MAX_VIDEO_BYTES) {
+      throw new Error('El video pesa más de 50 MB.');
+    }
+    const col = collection(db, 'salas', activeSalaId, 'chat');
+    const base = { tipo: esVideo ? 'video' : 'imagen', usuario: username, timestamp: Date.now() };
+
+    // Imagen dentro del propio mensaje (sin Storage): se reduce primero para que quepa.
+    const enviarInline = async () => {
+      const b64 = await imagenPequena(asset.uri);
+      if (b64.length > MAX_B64) throw new Error('La imagen sigue siendo demasiado grande.');
+      await addDoc(col, { ...base, b64 });
+      return 'inline';
+    };
+
+    if (!USAR_STORAGE) {
+      if (esVideo) throw new Error('Los videos necesitan Firebase Storage, que no está activado en esta app.');
+      return enviarInline();
+    }
+
+    try {
+      const url = await subirArchivo({
+        uri: asset.uri,
+        ruta: `salas/${activeSalaId}/chat/${Date.now()}_${userKey(username)}.${extDeMime(mime)}`,
+        mime,
+        onProgress
+      });
+      await addDoc(col, { ...base, url });
+      return 'storage';
+    } catch (e) {
+      if (!esVideo) return enviarInline(); // respaldo si Storage falla
+      throw e;
+    }
   };
 
   // ---------- Música sincronizada ----------
@@ -172,6 +267,54 @@ export function GymProvider({ children }) {
     await batch.commit();
   };
 
+  // ---------- Playlists (colecciones de canciones de la sala) ----------
+  const plDoc = (plId) => doc(db, 'salas', activeSalaId, 'playlists', plId);
+  const plSongs = (plId) => collection(db, 'salas', activeSalaId, 'playlists', plId, 'canciones');
+
+  const crearPlaylist = async (nombre) => {
+    const n = nombre.trim();
+    if (!n || !activeSalaId) return false;
+    await addDoc(collection(db, 'salas', activeSalaId, 'playlists'), { nombre: n, creador: username, creadoEn: Date.now() });
+    return true;
+  };
+
+  const eliminarPlaylist = async (pl) => {
+    const snap = await getDocs(plSongs(pl.id));
+    const batch = writeBatch(db);
+    snap.docs.forEach((d) => batch.delete(d.ref));
+    batch.delete(plDoc(pl.id));
+    await batch.commit();
+  };
+
+  const agregarAPlaylist = async (plId, link) => {
+    const l = link.trim();
+    if (!l || !tipoLink(l)) return false;
+    await addDoc(plSongs(plId), { link: l, usuario: username, timestamp: Date.now() });
+    return true;
+  };
+
+  const quitarDePlaylist = (plId, songId) => deleteDoc(doc(plSongs(plId), songId));
+
+  const escucharCancionesPlaylist = (plId, cb) =>
+    onSnapshot(query(plSongs(plId), orderBy('timestamp', 'asc')), (snap) =>
+      cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
+
+  // reemplazar = true: la cola pasa a ser la playlist y empieza a sonar. false: se añade al final.
+  const reproducirPlaylist = async (canciones, reemplazar) => {
+    if (!activeSalaId || !canciones.length) return;
+    const batch = writeBatch(db);
+    if (reemplazar) colaMusica.forEach((t) => batch.delete(doc(db, 'salas', activeSalaId, 'musica', t.id)));
+    const base = Date.now();
+    canciones.forEach((c, i) =>
+      batch.set(doc(collection(db, 'salas', activeSalaId, 'musica')), {
+        link: c.link, usuario: c.usuario || username, timestamp: base + i
+      }));
+    if (reemplazar || musicaEstado.indice === -1) {
+      batch.update(salaRef(), { 'musicaEstado.indice': reemplazar ? 0 : colaMusica.length, 'musicaEstado.reproduciendo': true });
+    }
+    await batch.commit();
+  };
+
   // ---------- Rutinas ----------
   const rutinaRef = (id) => doc(db, 'salas', activeSalaId, 'rutinas', id);
 
@@ -235,6 +378,15 @@ export function GymProvider({ children }) {
     }
   };
 
+  // Marca el primer ejercicio sin check del día de hoy (lo usa el botón "Check" de la notificación).
+  const checkSiguienteEjercicio = async () => {
+    const fecha = toKey(new Date());
+    const { siguiente: sig } = estadoChecklist(fecha, rutinas, progreso, username);
+    if (!sig) return null;
+    await toggleEjercicio(fecha, sig, true);
+    return sig;
+  };
+
   // ---------- Métricas ----------
   const guardarMedida = async (peso, altura) => {
     const imc = calcIMC(peso, altura);
@@ -270,17 +422,36 @@ export function GymProvider({ children }) {
   };
   const eliminarCarga = (id) => deleteDoc(miDoc('cargas', id));
 
+  // Solo lectura: las métricas de otro miembro de la sala.
+  const escucharMetricasDe = (nombre, cb) => {
+    const base = ['usuarios', userKey(nombre)];
+    let med = [];
+    let car = [];
+    const emit = () => cb({ medidas: med, cargas: car });
+    const u1 = onSnapshot(query(collection(db, ...base, 'medidas'), orderBy('ts', 'desc')), (snap) => {
+      med = snap.docs.map((d) => ({ id: d.id, ...d.data() })); emit();
+    });
+    const u2 = onSnapshot(collection(db, ...base, 'cargas'), (snap) => {
+      car = snap.docs.map((d) => ({ id: d.id, ...d.data() })); emit();
+    });
+    return () => { u1(); u2(); };
+  };
+
   return (
     <GymContext.Provider value={{
-      username, setUsername,
-      activeSalaId, setActiveSalaId, salirSala,
-      sala, participantes, mensajes, colaMusica, musicaEstado, trackActual,
+      authListo, username, iniciarSesion, registrar, cerrarSesion,
+      activeSalaId, setActiveSalaId, entrarSala, salirSala,
+      sala, participantes, miembros, mensajes, colaMusica, musicaEstado, trackActual,
       micMuted, setMicMuted, othersMuted, setOthersMuted, appMuted, setAppMuted,
       micOff, othersOff, musicOff,
-      enviarMensaje,
+      volMusica, setVolMusica, volVoz, setVolVoz,
+      enviarMensaje, enviarMedia,
       agregarTrack, alternarPlayPausa, siguiente, anterior, irATrack, finDeCancion, quitarTrack,
-      rutinas, progreso, guardarDia, agregarEjercicio, eliminarEjercicio, toggleEjercicio,
-      cargas, medidas, guardarMedida, editarMedida, eliminarMedida, editarCarga, eliminarCarga
+      playlists, crearPlaylist, eliminarPlaylist, agregarAPlaylist, quitarDePlaylist,
+      escucharCancionesPlaylist, reproducirPlaylist,
+      rutinas, progreso, guardarDia, agregarEjercicio, eliminarEjercicio, toggleEjercicio, checkSiguienteEjercicio,
+      cargas, medidas, guardarMedida, editarMedida, eliminarMedida, editarCarga, eliminarCarga,
+      escucharMetricasDe
     }}>
       {children}
     </GymContext.Provider>
