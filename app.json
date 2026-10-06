@@ -1,0 +1,29 @@
+{
+  "expo": {
+    "name": "On-LineGym",
+    "slug": "on-line-gym",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "https://flaticon.com",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "resizeMode": "contain",
+      "backgroundColor": "#0A0A0C"
+    },
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#0A0A0C"
+      },
+      "package": "com.onlinegym.app"
+    },
+    "web": {
+      "favicon": "https://flaticon.com"
+    },
+    "plugins": [
+      "expo-status-bar"
+    ]
+  }
+}
