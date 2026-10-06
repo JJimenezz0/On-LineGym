@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ScrollView, Alert, Modal } from 'react-native';
 import { useGym } from '../../context/GymContext';
 import { st, C } from '../../styles/neonTheme';
+import { KeyboardView } from '../../components/KeyboardView';
 import { calcIMC, categoriaIMC, progresion, toKey } from '../../utils/helpers';
 
 const flecha = (act, prev) => (act > prev ? '▲' : act < prev ? '▼' : '＝');
@@ -9,16 +10,29 @@ const color = (act, prev) => (act > prev ? C.verde : act < prev ? '#ff4d6d' : '#
 
 export default function MetricasTab() {
   const {
+    username, miembros, escucharMetricasDe,
     medidas, cargas, guardarMedida,
     editarMedida, eliminarMedida, editarCarga, eliminarCarga
   } = useGym();
   const [w, setW] = useState('');
   const [h, setH] = useState('');
 
-  // Edición de una medida
+  // A quién se está mirando: yo (editable) u otro miembro de la sala (solo lectura)
+  const [ver, setVer] = useState(username);
+  const [ajeno, setAjeno] = useState({ medidas: [], cargas: [] });
+  const soloLectura = ver !== username;
+
   const [eMed, setEMed] = useState(null); // { id, peso, altura, fecha }
-  // Edición de una carga
   const [eCar, setECar] = useState(null); // { id, nombre, fecha, peso, reps, sets }
+
+  useEffect(() => {
+    if (!soloLectura) return;
+    setAjeno({ medidas: [], cargas: [] });
+    return escucharMetricasDe(ver, setAjeno);
+  }, [ver]);
+
+  const medidasV = soloLectura ? ajeno.medidas : medidas;
+  const cargasV = soloLectura ? ajeno.cargas : cargas;
 
   // Precarga la última medida guardada
   useEffect(() => {
@@ -28,13 +42,14 @@ export default function MetricasTab() {
     }
   }, [medidas.length]);
 
-  const imc = calcIMC(w, h); // en tiempo real, mientras escribes
-  const prog = useMemo(() => progresion(cargas, toKey(new Date())), [cargas]);
+  const imc = soloLectura ? (medidasV[0] ? medidasV[0].imc : null) : calcIMC(w, h); // en tiempo real
+  const prog = useMemo(() => progresion(cargasV, toKey(new Date())), [cargasV]);
   const cargasOrdenadas = useMemo(
-    () => [...cargas].sort((a, b) => (b.fecha === a.fecha ? b.ts - a.ts : b.fecha.localeCompare(a.fecha))).slice(0, 20),
-    [cargas]
+    () => [...cargasV].sort((a, b) => (b.fecha === a.fecha ? b.ts - a.ts : b.fecha.localeCompare(a.fecha))).slice(0, 20),
+    [cargasV]
   );
   const imcEdit = eMed ? calcIMC(eMed.peso, eMed.altura) : null;
+  const otros = miembros.filter((m) => m !== username);
 
   const guardar = async () => {
     const ok = await guardarMedida(w, h);
@@ -60,25 +75,58 @@ export default function MetricasTab() {
       { text: 'Eliminar', style: 'destructive', onPress: fn }
     ]);
 
-  return (
-    <ScrollView style={{ padding: 20 }} keyboardShouldPersistTaps="handled">
-      <Text style={st.sectionTitle}>MIS DATOS BIOMÉTRICOS</Text>
-      <TextInput style={st.input} placeholder="Peso corporal (kg)" placeholderTextColor="#444" keyboardType="numeric" value={w} onChangeText={setW} />
-      <TextInput style={st.input} placeholder="Altura (cm)" placeholderTextColor="#444" keyboardType="numeric" value={h} onChangeText={setH} />
+  const Chip = ({ nombre, etiqueta }) => (
+    <TouchableOpacity
+      onPress={() => setVer(nombre)}
+      style={{
+        paddingVertical: 6, paddingHorizontal: 12, borderRadius: 16, marginRight: 8, borderWidth: 1,
+        borderColor: ver === nombre ? C.verde : '#333', backgroundColor: ver === nombre ? C.verde : 'transparent'
+      }}
+    >
+      <Text style={{ color: ver === nombre ? C.oscuro : '#AAA', fontWeight: '900', fontSize: 11 }}>{etiqueta || nombre}</Text>
+    </TouchableOpacity>
+  );
 
-      {imc && (
-        <View style={st.imcCard}>
-          <Text style={{ color: C.oscuro, fontSize: 11, fontWeight: '900' }}>TU IMC ACTUAL</Text>
-          <Text style={{ color: C.oscuro, fontSize: 40, fontWeight: '900' }}>{imc.toFixed(1)}</Text>
-          <Text style={{ color: C.oscuro, fontWeight: '900' }}>{categoriaIMC(imc).toUpperCase()}</Text>
+  return (
+    <ScrollView style={{ padding: 20 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
+      {otros.length > 0 && (
+        <View style={{ marginBottom: 14 }}>
+          <Text style={st.sectionTitle}>VER MÉTRICAS DE</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            <Chip nombre={username} etiqueta="YO" />
+            {otros.map((n) => <Chip key={n} nombre={n} />)}
+          </ScrollView>
         </View>
       )}
-      <TouchableOpacity style={st.neonBtnAlt} onPress={guardar}><Text style={st.neonBtnTxt}>GUARDAR EN MI HISTORIAL</Text></TouchableOpacity>
+
+      {soloLectura ? (
+        <Text style={{ color: C.azul, fontSize: 12, marginBottom: 10 }}>👁 Viendo las métricas de {ver} (solo lectura)</Text>
+      ) : (
+        <>
+          <Text style={st.sectionTitle}>MIS DATOS BIOMÉTRICOS</Text>
+          <TextInput style={st.input} placeholder="Peso corporal (kg)" placeholderTextColor="#444" keyboardType="numeric" value={w} onChangeText={setW} />
+          <TextInput style={st.input} placeholder="Altura (cm)" placeholderTextColor="#444" keyboardType="numeric" value={h} onChangeText={setH} />
+        </>
+      )}
+
+      {imc ? (
+        <View style={st.imcCard}>
+          <Text style={{ color: C.oscuro, fontSize: 11, fontWeight: '900' }}>{soloLectura ? `IMC DE ${ver.toUpperCase()}` : 'TU IMC ACTUAL'}</Text>
+          <Text style={{ color: C.oscuro, fontSize: 40, fontWeight: '900' }}>{Number(imc).toFixed(1)}</Text>
+          <Text style={{ color: C.oscuro, fontWeight: '900' }}>{categoriaIMC(Number(imc)).toUpperCase()}</Text>
+        </View>
+      ) : soloLectura ? (
+        <Text style={{ color: '#555', fontSize: 12 }}>{ver} aún no ha guardado medidas.</Text>
+      ) : null}
+
+      {!soloLectura && (
+        <TouchableOpacity style={st.neonBtnAlt} onPress={guardar}><Text style={st.neonBtnTxt}>GUARDAR EN MI HISTORIAL</Text></TouchableOpacity>
+      )}
 
       <Text style={[st.sectionTitle, { marginTop: 25 }]}>PROGRESIÓN DE CARGAS · ESTA SEMANA VS LA ANTERIOR</Text>
       {prog.length === 0 && (
         <Text style={{ color: '#555', fontSize: 12 }}>
-          Aún no hay datos. Marca ejercicios como completados en la pestaña RUTINA y aquí verás tu progreso.
+          Aún no hay datos. Los ejercicios que se marcan como completados en la pestaña RUTINA aparecen aquí.
         </Text>
       )}
       {prog.map((g) => (
@@ -105,7 +153,7 @@ export default function MetricasTab() {
         </View>
       ))}
 
-      <Text style={[st.sectionTitle, { marginTop: 25 }]}>REGISTROS DE CARGAS (TOCA ✎ PARA EDITAR)</Text>
+      <Text style={[st.sectionTitle, { marginTop: 25 }]}>REGISTROS DE CARGAS{soloLectura ? '' : ' (TOCA ✎ PARA EDITAR)'}</Text>
       {cargasOrdenadas.length === 0 && <Text style={{ color: '#555', fontSize: 12 }}>Sin registros todavía.</Text>}
       {cargasOrdenadas.map((c) => (
         <View key={c.id} style={st.smallCard}>
@@ -113,43 +161,51 @@ export default function MetricasTab() {
             <Text style={{ color: '#FFF', textTransform: 'capitalize' }} numberOfLines={1}>{c.nombre}</Text>
             <Text style={{ color: '#888', fontSize: 11 }}>{c.fecha} · {c.sets}x{c.reps} · {c.peso} kg</Text>
           </View>
-          <TouchableOpacity
-            style={{ padding: 8 }}
-            onPress={() => setECar({ id: c.id, nombre: c.nombre, fecha: c.fecha, peso: String(c.peso), reps: String(c.reps), sets: String(c.sets) })}
-          >
-            <Text style={{ color: C.azul, fontSize: 16 }}>✎</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={{ padding: 8 }} onPress={() => confirmar('Eliminar registro', () => eliminarCarga(c.id))}>
-            <Text style={{ color: '#ff4d6d', fontSize: 16 }}>🗑</Text>
-          </TouchableOpacity>
+          {!soloLectura && (
+            <>
+              <TouchableOpacity
+                style={{ padding: 8 }}
+                onPress={() => setECar({ id: c.id, nombre: c.nombre, fecha: c.fecha, peso: String(c.peso), reps: String(c.reps), sets: String(c.sets) })}
+              >
+                <Text style={{ color: C.azul, fontSize: 16 }}>✎</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={{ padding: 8 }} onPress={() => confirmar('Eliminar registro', () => eliminarCarga(c.id))}>
+                <Text style={{ color: '#ff4d6d', fontSize: 16 }}>🗑</Text>
+              </TouchableOpacity>
+            </>
+          )}
         </View>
       ))}
 
-      <Text style={[st.sectionTitle, { marginTop: 25 }]}>HISTORIAL DE MEDIDAS (TOCA ✎ PARA EDITAR)</Text>
-      {medidas.length === 0 && <Text style={{ color: '#555', fontSize: 12 }}>Sin medidas guardadas.</Text>}
-      {medidas.slice(0, 15).map((m) => (
+      <Text style={[st.sectionTitle, { marginTop: 25 }]}>HISTORIAL DE MEDIDAS{soloLectura ? '' : ' (TOCA ✎ PARA EDITAR)'}</Text>
+      {medidasV.length === 0 && <Text style={{ color: '#555', fontSize: 12 }}>Sin medidas guardadas.</Text>}
+      {medidasV.slice(0, 15).map((m) => (
         <View key={m.id} style={st.smallCard}>
           <View style={{ flex: 1 }}>
             <Text style={{ color: '#FFF' }}>{m.peso} kg · {m.altura} cm</Text>
             <Text style={{ color: '#888', fontSize: 11 }}>{m.fecha}</Text>
           </View>
           <Text style={{ color: C.verde, fontWeight: '900', marginRight: 4 }}>IMC {m.imc}</Text>
-          <TouchableOpacity
-            style={{ padding: 8 }}
-            onPress={() => setEMed({ id: m.id, peso: String(m.peso), altura: String(m.altura), fecha: m.fecha })}
-          >
-            <Text style={{ color: C.azul, fontSize: 16 }}>✎</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={{ padding: 8 }} onPress={() => confirmar('Eliminar medida', () => eliminarMedida(m.id))}>
-            <Text style={{ color: '#ff4d6d', fontSize: 16 }}>🗑</Text>
-          </TouchableOpacity>
+          {!soloLectura && (
+            <>
+              <TouchableOpacity
+                style={{ padding: 8 }}
+                onPress={() => setEMed({ id: m.id, peso: String(m.peso), altura: String(m.altura), fecha: m.fecha })}
+              >
+                <Text style={{ color: C.azul, fontSize: 16 }}>✎</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={{ padding: 8 }} onPress={() => confirmar('Eliminar medida', () => eliminarMedida(m.id))}>
+                <Text style={{ color: '#ff4d6d', fontSize: 16 }}>🗑</Text>
+              </TouchableOpacity>
+            </>
+          )}
         </View>
       ))}
       <View style={{ height: 40 }} />
 
       {/* Modal: editar medida */}
       <Modal visible={!!eMed} animationType="fade" transparent onRequestClose={() => setEMed(null)}>
-        <View style={st.overlay}>
+        <KeyboardView style={st.overlay}>
           <View style={st.modalBox}>
             <Text style={st.modalTitle}>EDITAR MEDIDA</Text>
             {eMed && (
@@ -168,12 +224,12 @@ export default function MetricasTab() {
               <TouchableOpacity style={st.miniBtn} onPress={guardarEdicionMedida}><Text style={{ color: C.oscuro, fontWeight: '900' }}>GUARDAR</Text></TouchableOpacity>
             </View>
           </View>
-        </View>
+        </KeyboardView>
       </Modal>
 
       {/* Modal: editar carga */}
       <Modal visible={!!eCar} animationType="fade" transparent onRequestClose={() => setECar(null)}>
-        <View style={st.overlay}>
+        <KeyboardView style={st.overlay}>
           <View style={st.modalBox}>
             <Text style={st.modalTitle}>EDITAR REGISTRO</Text>
             {eCar && (
@@ -201,7 +257,7 @@ export default function MetricasTab() {
               <TouchableOpacity style={st.miniBtn} onPress={guardarEdicionCarga}><Text style={{ color: C.oscuro, fontWeight: '900' }}>GUARDAR</Text></TouchableOpacity>
             </View>
           </View>
-        </View>
+        </KeyboardView>
       </Modal>
     </ScrollView>
   );

@@ -23,8 +23,12 @@ export function matrizMes(year, month) {
 }
 
 // ---------- Usuario ----------
-// Id seguro para usar como id de documento en Firestore.
-export const userKey = (nombre) => encodeURIComponent((nombre || '').trim().toLowerCase());
+// Los nombres solo pueden tener letras, números, punto, guion y guion bajo (3 a 20),
+// así que en minúsculas sirven directamente como id de documento y como parte del correo interno.
+export const USUARIO_REGEX = /^[A-Za-z0-9_.-]{3,20}$/;
+export const userKey = (nombre) => (nombre || '').trim().toLowerCase();
+// Firebase Auth exige un correo: se genera uno interno a partir del nombre de usuario.
+export const emailDe = (nombre) => `${userKey(nombre)}@onlinegym.app`;
 
 // ---------- Proximidad ----------
 export const RADIO_METROS = 300;
@@ -72,6 +76,16 @@ export function resolverRutina(fecha, rutinas) {
   const sem = rutinas.find((r) => r.id === `semanal_${dow}`);
   if (sem && fecha >= (sem.desde || '0000-00-00')) return { ...sem, origen: 'semanal', refId: sem.id };
   return null;
+}
+
+// Estado del checklist de un día para un usuario: el "siguiente" es el primer ejercicio sin check.
+export function estadoChecklist(fecha, rutinas, progreso, username) {
+  const rutina = resolverRutina(fecha, rutinas);
+  const ejercicios = rutina?.ejercicios || [];
+  const hechosMap = progreso?.[fecha]?.completados?.[username] || {};
+  const siguiente = ejercicios.find((e) => !hechosMap[e.id]) || null;
+  const hechos = ejercicios.filter((e) => hechosMap[e.id]).length;
+  return { rutina, ejercicios, total: ejercicios.length, hechos, siguiente };
 }
 
 // ---------- Métricas ----------

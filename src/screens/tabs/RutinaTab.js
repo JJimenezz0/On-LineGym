@@ -61,7 +61,7 @@ export default function RutinaTab() {
     Object.keys(completados).filter((u) => u !== username && completados[u]?.[ejId]);
 
   return (
-    <ScrollView style={{ padding: 20 }} keyboardShouldPersistTaps="handled">
+    <ScrollView style={{ padding: 20 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
       {/* Calendario */}
       <View style={st.box}>
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>

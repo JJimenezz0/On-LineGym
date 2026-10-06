@@ -15,7 +15,8 @@
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#0A0A0C"
+        "backgroundColor": "#0A0A0C",
+        "softwareKeyboardLayoutMode": "resize"
       },
       "package": "com.onlinegym.app"
     },
@@ -23,7 +24,8 @@
       "favicon": "https://flaticon.com"
     },
     "plugins": [
-      "expo-status-bar"
+      "expo-status-bar",
+      "expo-video"
     ]
   }
 }
