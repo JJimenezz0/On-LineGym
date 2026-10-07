@@ -4,30 +4,48 @@
     "slug": "on-line-gym",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "src/img/icon.png",
+    "icon": "./src/img/icon.png",
     "userInterfaceStyle": "dark",
-    "splash": {
-      "image": "./src/img/adaptiveicon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#0A0A0C"
-    },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.onlinegym.app"
     },
     "android": {
+      "package": "com.onlinegym.app",
+      "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
         "foregroundImage": "./src/img/adaptiveicon.png",
-        "backgroundColor": "#0A0A0C",
-        "softwareKeyboardLayoutMode": "resize"
-      },
-      "package": "com.onlinegym.app"
+        "backgroundColor": "#0A0A0C"
+      }
     },
     "web": {
-      "favicon": "src/img/favicon.png"
+      "favicon": "./src/img/favicon.png"
     },
     "plugins": [
       "expo-status-bar",
-      "expo-video"
+      "expo-video",
+      "expo-notifications",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./src/img/adaptiveicon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#0A0A0C"
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "On-LineGym usa tu ubicación para mostrarte las salas cercanas."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "On-LineGym necesita acceder a tus fotos para enviarlas por el chat."
+        }
+      ]
     ],
     "extra": {
       "eas": {
