@@ -4,9 +4,10 @@
     "slug": "on-line-gym",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "https://flaticon.com",
+    "icon": "src/img/icon.png",
     "userInterfaceStyle": "dark",
     "splash": {
+      "image": "./src/img/adaptiveicon.png",
       "resizeMode": "contain",
       "backgroundColor": "#0A0A0C"
     },
@@ -15,17 +16,23 @@
     },
     "android": {
       "adaptiveIcon": {
+        "foregroundImage": "./src/img/adaptiveicon.png",
         "backgroundColor": "#0A0A0C",
         "softwareKeyboardLayoutMode": "resize"
       },
       "package": "com.onlinegym.app"
     },
     "web": {
-      "favicon": "https://flaticon.com"
+      "favicon": "src/img/favicon.png"
     },
     "plugins": [
       "expo-status-bar",
       "expo-video"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "70939e6d-22b8-4a0b-a1dd-fd4f61b07272"
+      }
+    }
   }
 }
